@@ -16,7 +16,7 @@ struct HabitTrackerApp: App {
 
 // Shared container used by both the app and the widget extension
 let sharedModelContainer: ModelContainer = {
-    let schema = Schema([Habit.self, HabitEntry.self, FastingSession.self])
+    let schema = Schema([Habit.self, HabitEntry.self, FastingSession.self, WeightEntry.self])
     let groupURL = FileManager.default
         .containerURL(forSecurityApplicationGroupIdentifier: appGroupID)!
         .appendingPathComponent("HabitTracker.store")

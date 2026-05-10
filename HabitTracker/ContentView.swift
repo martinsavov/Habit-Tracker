@@ -18,9 +18,13 @@ struct ContentView: View {
                 .tabItem { Label("Fasting", systemImage: "timer") }
                 .tag(2)
 
+            WeightView()
+                .tabItem { Label("Weight", systemImage: "scalemass.fill") }
+                .tag(3)
+
             SettingsView()
                 .tabItem { Label("Settings", systemImage: "gearshape.fill") }
-                .tag(3)
+                .tag(4)
         }
         .tint(.blue)
         .preferredColorScheme(resolvedColorScheme)
