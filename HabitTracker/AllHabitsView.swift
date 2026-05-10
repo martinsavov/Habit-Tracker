@@ -5,6 +5,7 @@ struct AllHabitsView: View {
     @Environment(\.modelContext) private var context
     @Query(sort: \Habit.sortOrder) private var habits: [Habit]
     @State private var showingAddHabit = false
+    @State private var isEditing = false
 
     var body: some View {
         NavigationStack {
@@ -22,21 +23,31 @@ struct AllHabitsView: View {
                             .listRowInsets(EdgeInsets(top: 5, leading: 16, bottom: 5, trailing: 16))
                         }
                         .onDelete(perform: deleteHabits)
+                        .onMove(perform: moveHabits)
                     }
                     .listStyle(.plain)
                     .scrollContentBackground(.hidden)
+                    .environment(\.editMode, .constant(isEditing ? .active : .inactive))
                 }
             }
             .navigationTitle("My Habits")
             .navigationBarTitleDisplayMode(.large)
             .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    if !habits.isEmpty {
+                        Button(isEditing ? "Done" : "Reorder") {
+                            withAnimation { isEditing.toggle() }
+                        }
+                        .foregroundStyle(.blue)
+                    }
+                }
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button {
                         showingAddHabit = true
                     } label: {
                         Image(systemName: "plus.circle.fill")
                             .font(.title2)
-                            .foregroundStyle(.purple)
+                            .foregroundStyle(.blue)
                     }
                 }
             }
@@ -49,6 +60,15 @@ struct AllHabitsView: View {
     private func deleteHabits(at offsets: IndexSet) {
         for index in offsets { context.delete(habits[index]) }
         do { try context.save() } catch { print("Delete error: \(error)") }
+    }
+
+    private func moveHabits(from source: IndexSet, to destination: Int) {
+        var reordered = habits
+        reordered.move(fromOffsets: source, toOffset: destination)
+        for (index, habit) in reordered.enumerated() {
+            habit.sortOrder = index
+        }
+        do { try context.save() } catch { print("Move error: \(error)") }
     }
 }
 
