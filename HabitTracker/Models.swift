@@ -140,11 +140,13 @@ final class Habit {
 final class HabitEntry {
     var id: UUID
     var date: Date
+    var note: String
     var habit: Habit?
 
-    init(date: Date = Date(), habit: Habit? = nil) {
+    init(date: Date = Date(), note: String = "", habit: Habit? = nil) {
         self.id    = UUID()
         self.date  = date
+        self.note  = note
         self.habit = habit
     }
 }
