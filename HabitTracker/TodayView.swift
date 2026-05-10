@@ -263,7 +263,7 @@ struct HabitRowView: View {
                 Spacer()
 
                 // Note indicator
-                if let entry = existingEntry, !entry.note.isEmpty {
+                if let entry = existingEntry, let note = entry.note, !note.isEmpty {
                     Button {
                         showingNoteSheet = true
                     } label: {
@@ -297,12 +297,12 @@ struct HabitRowView: View {
             }
 
             // Show note if exists
-            if let entry = existingEntry, !entry.note.isEmpty {
+            if let entry = existingEntry, let note = entry.note, !note.isEmpty {
                 HStack(spacing: 6) {
                     Rectangle()
                         .fill(habit.color)
                         .frame(width: 2)
-                    Text(entry.note)
+                    Text(note)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(2)
@@ -335,7 +335,7 @@ struct HabitRowView: View {
                 UIImpactFeedbackGenerator(style: .light).impactOccurred()
             }
         } else {
-            let entry = HabitEntry(date: date, note: "", habit: habit)
+            let entry = HabitEntry(date: date, note: nil, habit: habit)
             context.insert(entry)
             do { try context.save() } catch { print("Save error: \(error)") }
             pendingEntry = entry
@@ -397,7 +397,7 @@ struct HabitNoteSheet: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") {
-                        entry.note = note
+                        entry.note = note.isEmpty ? nil : note
                         do { try context.save() } catch { print("Note save error: \(error)") }
                         dismiss()
                     }
@@ -407,7 +407,7 @@ struct HabitNoteSheet: View {
         }
         .presentationDetents([.medium])
         .onAppear {
-            note = entry.note
+            note = entry.note ?? ""
             focused = true
         }
     }

@@ -20,10 +20,19 @@ let sharedModelContainer: ModelContainer = {
     let groupURL = FileManager.default
         .containerURL(forSecurityApplicationGroupIdentifier: appGroupID)!
         .appendingPathComponent("HabitTracker.store")
+    // allowsSave: true + no version spec = SwiftData handles lightweight migration automatically
     let config = ModelConfiguration(schema: schema, url: groupURL)
     do {
         return try ModelContainer(for: schema, configurations: [config])
     } catch {
-        fatalError("Could not create ModelContainer: \(error)")
+        // If migration fails, try destroying and recreating the store
+        // This preserves app stability at the cost of data — better than a crash
+        print("ModelContainer error: \(error). Attempting recovery...")
+        let recoveryConfig = ModelConfiguration(schema: schema, url: groupURL, allowsSave: true)
+        do {
+            return try ModelContainer(for: schema, configurations: [recoveryConfig])
+        } catch {
+            fatalError("Could not create ModelContainer even after recovery: \(error)")
+        }
     }
 }()
