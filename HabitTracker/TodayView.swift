@@ -226,7 +226,6 @@ struct HabitRowView: View {
     let date:  Date
     @State private var bouncing = false
     @State private var showingNoteSheet = false
-    @State private var pendingEntry: HabitEntry? = nil
 
     private var isCompleted: Bool { habit.isCompleted(on: date) }
 
@@ -262,14 +261,16 @@ struct HabitRowView: View {
 
                 Spacer()
 
-                // Note indicator
-                if let entry = existingEntry, let note = entry.note, !note.isEmpty {
+                // Note icon — always shown when completed, tap to add/edit
+                if isCompleted {
                     Button {
                         showingNoteSheet = true
                     } label: {
-                        Image(systemName: "note.text")
+                        Image(systemName: existingEntry?.note != nil && !(existingEntry?.note ?? "").isEmpty
+                              ? "note.text" : "note.text.badge.plus")
                             .font(.caption)
-                            .foregroundStyle(habit.color)
+                            .foregroundStyle(existingEntry?.note != nil && !(existingEntry?.note ?? "").isEmpty
+                                             ? habit.color : .secondary)
                     }
                     .buttonStyle(.plain)
                 }
@@ -316,7 +317,7 @@ struct HabitRowView: View {
         .clipShape(RoundedRectangle(cornerRadius: 18))
         .animation(.easeInOut(duration: 0.15), value: isCompleted)
         .sheet(isPresented: $showingNoteSheet) {
-            if let entry = existingEntry ?? pendingEntry {
+            if let entry = existingEntry {
                 HabitNoteSheet(entry: entry, habitColor: habit.color)
             }
         }
@@ -337,16 +338,9 @@ struct HabitRowView: View {
         } else {
             let entry = HabitEntry(date: date, note: nil, habit: habit)
             context.insert(entry)
-            do { try context.save() } catch { print("Save error: \(error)") }
-            pendingEntry = entry
             bouncing = true
             UINotificationFeedbackGenerator().notificationOccurred(.success)
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { bouncing = false }
-            // Show note sheet after a brief delay
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
-                showingNoteSheet = true
-            }
-            return
         }
         do { try context.save() } catch { print("Save error: \(error)") }
     }
