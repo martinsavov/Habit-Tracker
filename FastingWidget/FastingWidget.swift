@@ -1,8 +1,7 @@
 import WidgetKit
 import SwiftUI
-import SwiftData
 
-// MARK: - Shared App Group ID (must match HabitTrackerApp.swift)
+// MARK: - Shared App Group ID
 private let appGroupID = "group.com.martinsavov.habittracker"
 
 // MARK: - Timeline Entry
@@ -33,7 +32,6 @@ struct FastingProvider: TimelineProvider {
 
     func getTimeline(in context: Context, completion: @escaping (Timeline<FastingEntry>) -> Void) {
         let current = entry()
-        // Refresh every 5 minutes, or at the goal time if fasting
         var nextUpdate = Date().addingTimeInterval(5 * 60)
         if let start = current.startTime, current.isActive {
             let goalTime = start.addingTimeInterval(current.targetHours * 3600)
@@ -43,47 +41,22 @@ struct FastingProvider: TimelineProvider {
         completion(timeline)
     }
 
-    // MARK: - Read active session from shared SwiftData store
+    // MARK: - Read from App Group UserDefaults — never touch SwiftData store
 
     private func entry() -> FastingEntry {
-        guard let groupContainer = FileManager.default
-            .containerURL(forSecurityApplicationGroupIdentifier: appGroupID) else {
-            return emptyEntry()
-        }
+        let defaults  = UserDefaults(suiteName: appGroupID)
+        let isActive  = defaults?.bool(forKey: "fastingIsActive") ?? false
+        let startTime = defaults?.object(forKey: "fastingStartTime") as? Date
+        let target    = defaults?.double(forKey: "fastingTargetHours") ?? 16
+        let planName  = defaults?.string(forKey: "fastingPlanName") ?? ""
 
-        // SwiftData stores as a .sqlite file — must match exactly what the app writes
-        let storeURL = groupContainer.appendingPathComponent("HabitTracker.store")
-
-        do {
-            let schema = Schema([FastingSession.self, Habit.self, HabitEntry.self])
-            let config = ModelConfiguration(schema: schema, url: storeURL)
-            let container = try ModelContainer(for: schema, configurations: [config])
-            let context = ModelContext(container)
-
-            // Fetch all sessions and filter in memory — predicate on optional can be tricky
-            let descriptor = FetchDescriptor<FastingSession>(
-                sortBy: [SortDescriptor(\.startTime, order: .reverse)]
-            )
-            let sessions = try context.fetch(descriptor)
-            let active = sessions.first { $0.endTime == nil }
-
-            if let session = active {
-                return FastingEntry(
-                    date:         Date(),
-                    startTime:    session.startTime,
-                    targetHours:  session.targetHours,
-                    planName:     session.planName,
-                    isActive:     true
-                )
-            }
-        } catch {
-            print("Widget fetch error: \(error)")
-        }
-        return emptyEntry()
-    }
-
-    private func emptyEntry() -> FastingEntry {
-        FastingEntry(date: Date(), startTime: nil, targetHours: 16, planName: "", isActive: false)
+        return FastingEntry(
+            date:        Date(),
+            startTime:   isActive ? startTime : nil,
+            targetHours: target > 0 ? target : 16,
+            planName:    planName,
+            isActive:    isActive
+        )
     }
 }
 
@@ -103,7 +76,7 @@ struct FastingWidgetEntryView: View {
     }
 }
 
-// MARK: Lock screen circular (ring + elapsed time)
+// MARK: - Lock screen circular
 
 struct CircularView: View {
     let entry: FastingEntry
@@ -120,8 +93,7 @@ struct CircularView: View {
                 .progressViewStyle(.circular)
 
                 VStack(spacing: 0) {
-                    Image(systemName: "timer")
-                        .font(.system(size: 10))
+                    Image(systemName: "timer").font(.system(size: 10))
                     Text(start, style: .timer)
                         .font(.system(size: 11, weight: .bold, design: .rounded))
                         .monospacedDigit()
@@ -140,7 +112,7 @@ struct CircularView: View {
     }
 }
 
-// MARK: Lock screen rectangular (plan + countdown)
+// MARK: - Lock screen rectangular
 
 struct RectangularView: View {
     let entry: FastingEntry
@@ -158,13 +130,14 @@ struct RectangularView: View {
                         .font(.caption2).foregroundStyle(reached ? .green : .secondary)
                 }
                 if reached {
-                    Text("Goal reached! 🎉")
-                        .font(.headline).fontWeight(.bold)
+                    Text("Goal reached! 🎉").font(.headline).fontWeight(.bold)
                 } else {
                     Text(start, style: .timer)
                         .font(.title3).fontWeight(.bold).monospacedDigit()
                         .frame(maxWidth: .infinity, alignment: .leading)
-                    ProgressView(timerInterval: start...end, countsDown: false, label: { EmptyView() }, currentValueLabel: { EmptyView() })
+                    ProgressView(timerInterval: start...end, countsDown: false,
+                                 label: { EmptyView() },
+                                 currentValueLabel: { EmptyView() })
                         .progressViewStyle(.linear)
                         .tint(.blue)
                 }
@@ -178,7 +151,7 @@ struct RectangularView: View {
     }
 }
 
-// MARK: Home screen small
+// MARK: - Home screen small
 
 struct SmallView: View {
     let entry: FastingEntry
@@ -192,8 +165,7 @@ struct SmallView: View {
                     Text("⏱").font(.title2)
                     Spacer()
                     Text(entry.planName)
-                        .font(.caption).fontWeight(.semibold)
-                        .foregroundStyle(.secondary)
+                        .font(.caption).fontWeight(.semibold).foregroundStyle(.secondary)
                 }
                 Spacer()
                 if reached {
@@ -203,8 +175,7 @@ struct SmallView: View {
                     Text(start, style: .timer)
                         .font(.title2).fontWeight(.bold).monospacedDigit()
                     ProgressView(timerInterval: start...end, countsDown: false)
-                        .progressViewStyle(.linear)
-                        .tint(.blue)
+                        .progressViewStyle(.linear).tint(.blue)
                 }
                 Spacer()
             }

@@ -13,7 +13,9 @@ struct FastingView: View {
     @State private var showingPlanPicker = false
     @State private var showingEndConfirm = false
     @State private var showingEditFast = false
+    @State private var showingFastNoteSheet = false
     @State private var sessionToEdit: FastingSession?
+    @State private var justEndedSession: FastingSession?
     @State private var now = Date()
     @State private var timer: Timer?
 
@@ -83,6 +85,11 @@ struct FastingView: View {
                 EditFastSheet(session: session)
             }
         }
+        .sheet(isPresented: $showingFastNoteSheet) {
+            if let session = justEndedSession {
+                FastingNoteSheet(session: session)
+            }
+        }
     }
 
     // MARK: - Timer
@@ -111,6 +118,13 @@ struct FastingView: View {
         )
         context.insert(session)
         do { try context.save() } catch { print("Save error: \(error)") }
+        // Write to shared UserDefaults so widget can read it
+        if let defaults = UserDefaults(suiteName: appGroupID) {
+            defaults.set(true,                    forKey: "fastingIsActive")
+            defaults.set(Date(),                  forKey: "fastingStartTime")
+            defaults.set(hours,                   forKey: "fastingTargetHours")
+            defaults.set(selectedPlan.rawValue,   forKey: "fastingPlanName")
+        }
         WidgetCenter.shared.reloadAllTimelines()
         scheduleGoalNotification(targetHours: hours)
         UINotificationFeedbackGenerator().notificationOccurred(.success)
@@ -120,9 +134,19 @@ struct FastingView: View {
         guard let session = activeSession else { return }
         session.endTime = Date()
         do { try context.save() } catch { print("Save error: \(error)") }
+        // Clear shared UserDefaults
+        if let defaults = UserDefaults(suiteName: appGroupID) {
+            defaults.set(false, forKey: "fastingIsActive")
+            defaults.removeObject(forKey: "fastingStartTime")
+        }
         WidgetCenter.shared.reloadAllTimelines()
         cancelGoalNotification()
         UINotificationFeedbackGenerator().notificationOccurred(.success)
+        // Show note sheet after ending
+        justEndedSession = session
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+            showingFastNoteSheet = true
+        }
     }
 
     // MARK: - Notifications
@@ -498,33 +522,47 @@ struct FastHistoryRow: View {
 
     var body: some View {
         Button { showingEdit = true } label: {
-            HStack(spacing: 12) {
-                Text(session.phase.emoji)
-                    .font(.title3)
-                    .frame(width: 36, height: 36)
-                    .background(Color(.tertiarySystemBackground))
-                    .clipShape(Circle())
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 12) {
+                    Text(session.phase.emoji)
+                        .font(.title3)
+                        .frame(width: 36, height: 36)
+                        .background(Color(.tertiarySystemBackground))
+                        .clipShape(Circle())
 
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(session.planName)
-                        .font(.subheadline).fontWeight(.semibold)
-                        .foregroundStyle(.primary)
-                    Text(session.startTime.formatted(.dateTime.month(.abbreviated).day().hour().minute()))
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(session.planName)
+                            .font(.subheadline).fontWeight(.semibold)
+                            .foregroundStyle(.primary)
+                        Text(session.startTime.formatted(.dateTime.month(.abbreviated).day().hour().minute()))
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+
+                    Spacer()
+
+                    VStack(alignment: .trailing, spacing: 2) {
+                        Text(session.formattedDuration)
+                            .font(.subheadline).fontWeight(.semibold)
+                            .foregroundStyle(session.durationHours >= session.targetHours ? .green : .primary)
+                        Text(session.durationHours >= session.targetHours ? "Goal reached ✓" : "Ended early")
+                            .font(.caption2).foregroundStyle(.secondary)
+                    }
+
+                    Image(systemName: "pencil")
                         .font(.caption).foregroundStyle(.secondary)
                 }
 
-                Spacer()
-
-                VStack(alignment: .trailing, spacing: 2) {
-                    Text(session.formattedDuration)
-                        .font(.subheadline).fontWeight(.semibold)
-                        .foregroundStyle(session.durationHours >= session.targetHours ? .green : .primary)
-                    Text(session.durationHours >= session.targetHours ? "Goal reached ✓" : "Ended early")
-                        .font(.caption2).foregroundStyle(.secondary)
+                if !session.note.isEmpty {
+                    HStack(spacing: 6) {
+                        Rectangle()
+                            .fill(Color.blue)
+                            .frame(width: 2)
+                        Text(session.note)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                    }
                 }
-
-                Image(systemName: "pencil")
-                    .font(.caption).foregroundStyle(.secondary)
             }
             .padding(10)
             .background(Color(.tertiarySystemBackground))
@@ -701,5 +739,72 @@ struct EditFastSheet: View {
         }
         do { try context.save() } catch { print("Save error: \(error)") }
         dismiss()
+    }
+}
+
+
+
+
+// MARK: - Fasting Note Sheet
+
+struct FastingNoteSheet: View {
+    @Environment(\.modelContext) private var context
+    @Environment(\.dismiss) private var dismiss
+    let session: FastingSession
+
+    @State private var note: String = ""
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        NavigationStack {
+            VStack(alignment: .leading, spacing: 16) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Fast complete! \(session.formattedDuration)")
+                        .font(.headline)
+                    Text("How did it feel? Add a note.")
+                        .font(.subheadline).foregroundStyle(.secondary)
+                }
+                .padding(.horizontal)
+
+                ZStack(alignment: .topLeading) {
+                    RoundedRectangle(cornerRadius: 12)
+                        .fill(Color(.secondarySystemBackground))
+                    if note.isEmpty {
+                        Text("e.g. felt great, a bit hungry at hour 14...")
+                            .foregroundStyle(.secondary)
+                            .padding(12)
+                    }
+                    TextEditor(text: $note)
+                        .padding(8)
+                        .focused($focused)
+                        .scrollContentBackground(.hidden)
+                }
+                .frame(height: 120)
+                .padding(.horizontal)
+
+                Spacer()
+            }
+            .padding(.top)
+            .navigationTitle("Fasting Note")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Skip") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") {
+                        session.note = note.isEmpty ? "" : note
+                        do { try context.save() } catch { print("Note save error: \(error)") }
+                        dismiss()
+                    }
+                    .fontWeight(.semibold)
+                }
+            }
+        }
+        .presentationDetents([.medium])
+        .onAppear {
+            note = session.note ?? ""
+            focused = true
+        }
     }
 }

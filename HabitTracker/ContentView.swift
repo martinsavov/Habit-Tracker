@@ -19,7 +19,7 @@ struct ContentView: View {
                 .tag(2)
 
             WeightView()
-                .tabItem { Label("Weight", systemImage: "scalemass.fill") }
+                .tabItem { Label("Body", systemImage: "figure.stand") }
                 .tag(3)
 
             SettingsView()

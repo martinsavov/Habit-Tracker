@@ -64,7 +64,7 @@ final class FastingSession {
     var endTime: Date?           // nil = currently active
     var targetHours: Double
     var planName: String         // stores FastingPlan.rawValue or "Custom"
-    var note: String
+    var note: String   // Non-optional to avoid SwiftData type conflicts
 
     init(startTime: Date = Date(),
          targetHours: Double = 16,
