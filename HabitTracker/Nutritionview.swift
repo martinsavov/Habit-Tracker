@@ -347,7 +347,7 @@ struct TDEESetupSheet: View {
     @AppStorage("goalWeight")    private var goalWeight: Double = 0
 
     // Loss rate options: kg per week
-    @State private var lossRateKg: Double = 0.5
+    @AppStorage("lossRateKg") private var lossRateKg: Double = 0.5
     @State private var targetWeight: Double = 75
     @State private var useTargetDate = false
     @State private var targetDate = Calendar.current.date(byAdding: .month, value: 3, to: Date()) ?? Date()
