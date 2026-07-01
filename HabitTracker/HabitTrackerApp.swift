@@ -15,7 +15,7 @@ struct HabitTrackerApp: App {
 }
 
 private func checkpointAndVerify(at url: URL) -> Bool {
-    let required = ["ZHABIT","ZHABITENTRY","ZFASTINGSESSION","ZWEIGHTENTRY","ZFOODENTRY","ZFAVORITEFOOD"]
+    let required = ["ZHABIT","ZHABITENTRY","ZFASTINGSESSION","ZWEIGHTENTRY","ZFOODENTRY"]
     var db: OpaquePointer?
     guard sqlite3_open_v2(url.path, &db, SQLITE_OPEN_READWRITE, nil) == SQLITE_OK else { return false }
     defer { sqlite3_close(db) }
