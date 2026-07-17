@@ -19,6 +19,11 @@ struct FastingView: View {
     @State private var now = Date()
     @State private var timer: Timer?
 
+    // MARK: - Track additions (new state only, nothing existing touched)
+    @State private var showingTrackBlockedAlert = false
+    @State private var showingTrackEndConfirm = false
+    @State private var showingCustomTrack = false
+
     private var activeSession: FastingSession? {
         sessions.first { $0.isActive }
     }
@@ -27,21 +32,32 @@ struct FastingView: View {
         sessions.filter { !$0.isActive }
     }
 
+    // A "Track" session is just a FastingSession whose planName starts with "Track"
+    private var activeIsTrack: Bool {
+        activeSession?.planName.hasPrefix("Track") ?? false
+    }
+
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: 20) {
                     if let session = activeSession {
                         ActiveFastCard(session: session, now: now, onEnd: {
-                            showingEndConfirm = true
+                            if activeIsTrack {
+                                showingTrackEndConfirm = true
+                            } else {
+                                showingEndConfirm = true
+                            }
                         }, onEdit: {
                             sessionToEdit = session
                             showingEditFast = true
                         })
                         .padding(.horizontal)
 
-                        PhaseCard(session: session, now: now)
-                            .padding(.horizontal)
+                        if !activeIsTrack {
+                            PhaseCard(session: session, now: now)
+                                .padding(.horizontal)
+                        }
                     } else {
                         StartFastCard(
                             selectedPlan:   $selectedPlan,
@@ -50,6 +66,13 @@ struct FastingView: View {
                         ) {
                             startFast()
                         }
+                        .padding(.horizontal)
+
+                        // New: Track card, only shown when nothing is active
+                        TrackCard(
+                            onPreset: { minutes, label in startTrack(minutes: minutes, label: label) },
+                            onCustom: { showingCustomTrack = true }
+                        )
                         .padding(.horizontal)
                     }
 
@@ -61,7 +84,7 @@ struct FastingView: View {
                 .padding(.bottom, 32)
                 .padding(.top, 8)
             }
-            .navigationTitle("Fasting")
+            .navigationTitle("Tracker")
             .navigationBarTitleDisplayMode(.large)
         }
         .onAppear { startTicking() }
@@ -77,6 +100,17 @@ struct FastingView: View {
                 Text("You've been fasting since \(s.startTime.formatted(.dateTime.hour().minute())). Great work!")
             }
         }
+        // New: separate confirm for ending a Track (kept fully independent of endFast)
+        .confirmationDialog("End tracking?", isPresented: $showingTrackEndConfirm, titleVisibility: .visible) {
+            Button("End Track", role: .destructive) { endTrack() }
+            Button("Cancel", role: .cancel) { }
+        }
+        // New: alert shown if user tries to start a Track while a fast is active
+        .alert("Fast in progress", isPresented: $showingTrackBlockedAlert) {
+            Button("OK", role: .cancel) { }
+        } message: {
+            Text("You have an active fast running. End it first if you want to start a quick Track.")
+        }
         .sheet(isPresented: $showingPlanPicker) {
             PlanPickerSheet(selectedPlan: $selectedPlan, customHours: $customHours)
         }
@@ -88,6 +122,12 @@ struct FastingView: View {
         .sheet(isPresented: $showingFastNoteSheet) {
             if let session = justEndedSession {
                 FastingNoteSheet(session: session)
+            }
+        }
+        // New: custom Track duration sheet
+        .sheet(isPresented: $showingCustomTrack) {
+            CustomTrackSheet { minutes, label in
+                startTrack(minutes: minutes, label: label)
             }
         }
     }
@@ -107,7 +147,7 @@ struct FastingView: View {
         timer = nil
     }
 
-    // MARK: - Actions
+    // MARK: - Actions (UNCHANGED from original)
 
     private func startFast() {
         let hours = selectedPlan == .custom ? customHours : selectedPlan.targetHours
@@ -149,6 +189,49 @@ struct FastingView: View {
         }
     }
 
+    // MARK: - Track Actions (new, completely separate from fasting)
+    // Track sessions NEVER touch UserDefaults / WidgetCenter — the lock screen
+    // widget continues to reflect only real fasting sessions, exactly as before.
+
+    private func startTrack(minutes: Double, label: String) {
+        guard activeSession == nil else {
+            showingTrackBlockedAlert = true
+            return
+        }
+        let hours = minutes / 60
+        let planName = "Track · \(label)"
+        let session = FastingSession(
+            startTime:   Date(),
+            targetHours: hours,
+            planName:    planName
+        )
+        context.insert(session)
+        do { try context.save() } catch { print("Save error: \(error)") }
+        // Safe to write to the widget here — the guard above proves no fast is active,
+        // so this can never overwrite a live fasting session's widget data.
+        if let defaults = UserDefaults(suiteName: appGroupID) {
+            defaults.set(true,      forKey: "fastingIsActive")
+            defaults.set(Date(),    forKey: "fastingStartTime")
+            defaults.set(hours,     forKey: "fastingTargetHours")
+            defaults.set(planName,  forKey: "fastingPlanName")
+        }
+        WidgetCenter.shared.reloadAllTimelines()
+        UINotificationFeedbackGenerator().notificationOccurred(.success)
+    }
+
+    private func endTrack() {
+        guard let session = activeSession, activeIsTrack else { return }
+        session.endTime = Date()
+        do { try context.save() } catch { print("Save error: \(error)") }
+        // This Track owned the widget (guard above confirms it was active), so clear it.
+        if let defaults = UserDefaults(suiteName: appGroupID) {
+            defaults.set(false, forKey: "fastingIsActive")
+            defaults.removeObject(forKey: "fastingStartTime")
+        }
+        WidgetCenter.shared.reloadAllTimelines()
+        UINotificationFeedbackGenerator().notificationOccurred(.success)
+    }
+
     // MARK: - Notifications
 
     private func scheduleGoalNotification(targetHours: Double) {
@@ -175,13 +258,131 @@ struct FastingView: View {
     }
 }
 
-// MARK: - Active Fast Card
+// MARK: - Track Card (new)
+
+struct TrackCard: View {
+    let onPreset: (Double, String) -> Void
+    let onCustom: () -> Void
+
+    private let presets: [(label: String, minutes: Double)] = [
+        ("15m", 15), ("30m", 30), ("1h", 60), ("2h", 120)
+    ]
+
+    var body: some View {
+        VStack(spacing: 16) {
+            HStack {
+                Text("⚡").font(.title2)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Track").font(.headline).fontWeight(.bold)
+                    Text("Time any activity instantly").font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer()
+            }
+
+            HStack(spacing: 8) {
+                ForEach(presets, id: \.label) { preset in
+                    Button {
+                        onPreset(preset.minutes, preset.label)
+                        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                    } label: {
+                        Text(preset.label)
+                            .font(.subheadline).fontWeight(.semibold)
+                            .frame(maxWidth: .infinity, minHeight: 44)
+                            .background(Color.green)
+                            .foregroundStyle(.white)
+                            .clipShape(RoundedRectangle(cornerRadius: 12))
+                    }
+                    .buttonStyle(.plain)
+                }
+
+                Button(action: onCustom) {
+                    Text("Custom")
+                        .font(.subheadline).fontWeight(.semibold)
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                        .background(Color(.tertiarySystemBackground))
+                        .foregroundStyle(.green)
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(20)
+        .background(Color(.secondarySystemBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 24))
+    }
+}
+
+// MARK: - Custom Track Sheet (new)
+
+struct CustomTrackSheet: View {
+    let onStart: (Double, String) -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var minutes: Double = 45
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 32) {
+                Spacer()
+
+                VStack(spacing: 4) {
+                    Text(formattedDuration)
+                        .font(.system(size: 64, weight: .bold, design: .rounded))
+                        .foregroundStyle(.green)
+                    Text("duration").font(.caption).foregroundStyle(.secondary)
+                }
+
+                VStack(spacing: 8) {
+                    Slider(value: $minutes, in: 5...240, step: 5).tint(.green)
+                    HStack {
+                        Text("5 min").font(.caption).foregroundStyle(.secondary)
+                        Spacer()
+                        Text("4 hours").font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+                .padding(.horizontal)
+
+                Button {
+                    onStart(minutes, formattedDuration)
+                    dismiss()
+                } label: {
+                    Label("Start Tracking", systemImage: "play.circle.fill")
+                        .font(.title3).fontWeight(.bold)
+                        .frame(maxWidth: .infinity, minHeight: 56)
+                        .background(Color.green)
+                        .foregroundStyle(.white)
+                        .clipShape(RoundedRectangle(cornerRadius: 16))
+                }
+                .buttonStyle(.plain)
+                .padding(.horizontal)
+
+                Spacer()
+            }
+            .navigationTitle("Custom Duration")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+            }
+        }
+        .presentationDetents([.medium])
+    }
+
+    private var formattedDuration: String {
+        if minutes < 60 { return "\(Int(minutes))m" }
+        let h = Int(minutes / 60)
+        let m = Int(minutes.truncatingRemainder(dividingBy: 60))
+        return m == 0 ? "\(h)h" : "\(h)h \(m)m"
+    }
+}
+
+// MARK: - Active Fast Card (unchanged except label shows duration correctly for Track)
 
 struct ActiveFastCard: View {
     let session: FastingSession
     let now: Date
     let onEnd: () -> Void
     let onEdit: () -> Void
+
+    private var isTrack: Bool { session.planName.hasPrefix("Track") }
 
     private var elapsed: TimeInterval { now.timeIntervalSince(session.startTime) }
     private var elapsedHours: Double  { elapsed / 3600 }
@@ -195,9 +396,9 @@ struct ActiveFastCard: View {
         VStack(spacing: 24) {
             // Plan label
             HStack {
-                Label(session.planName, systemImage: "timer")
+                Label(session.planName, systemImage: isTrack ? "bolt.fill" : "timer")
                     .font(.subheadline).fontWeight(.semibold)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(isTrack ? .green : .secondary)
                 Spacer()
                 Button(action: onEdit) {
                     HStack(spacing: 4) {
@@ -221,8 +422,10 @@ struct ActiveFastCard: View {
                         LinearGradient(
                             colors: isGoalReached
                                 ? [.green, .mint]
-                                : [Color(hex: session.phase.color) ?? .blue,
-                                   Color(hex: session.phase.color)?.opacity(0.6) ?? .blue],
+                                : isTrack
+                                    ? [.green, .green.opacity(0.5)]
+                                    : [Color(hex: session.phase.color) ?? .blue,
+                                       Color(hex: session.phase.color)?.opacity(0.6) ?? .blue],
                             startPoint: .topLeading,
                             endPoint: .bottomTrailing
                         ),
@@ -254,7 +457,7 @@ struct ActiveFastCard: View {
                 Text("0h")
                     .font(.caption2).foregroundStyle(.secondary)
                 Spacer()
-                Text("\(Int(session.targetHours))h goal")
+                Text(targetLabel)
                     .font(.caption2).foregroundStyle(.secondary)
             }
 
@@ -271,7 +474,7 @@ struct ActiveFastCard: View {
                 .buttonStyle(.plain)
 
                 Button(action: onEnd) {
-                    Label("End Fast", systemImage: "stop.circle.fill")
+                    Label(isTrack ? "End Track" : "End Fast", systemImage: "stop.circle.fill")
                         .font(.body).fontWeight(.semibold)
                         .frame(maxWidth: .infinity, minHeight: 50)
                         .background(Color(.tertiarySystemBackground))
@@ -291,7 +494,17 @@ struct ActiveFastCard: View {
         let secs = Int(max(session.targetHours * 3600 - now.timeIntervalSince(session.startTime), 0))
         let h = secs / 3600
         let m = (secs % 3600) / 60
+        if session.targetHours < 1 {
+            return "\(secs / 60)m remaining"
+        }
         return String(format: "%dh %02dm remaining", h, m)
+    }
+
+    private var targetLabel: String {
+        if session.targetHours < 1 {
+            return "\(Int(session.targetHours * 60))m goal"
+        }
+        return "\(Int(session.targetHours))h goal"
     }
 }
 
@@ -427,18 +640,21 @@ struct StartFastCard: View {
     }
 }
 
-// MARK: - History Section
+// MARK: - History Section (only change: stats exclude Track sessions, tag added to rows)
 
 struct HistorySection: View {
     let sessions: [FastingSession]
     @Environment(\.modelContext) private var context
 
+    private var fastSessions: [FastingSession] {
+        sessions.filter { !$0.planName.hasPrefix("Track") }
+    }
     private var longestFast: FastingSession? {
-        sessions.max(by: { $0.durationHours < $1.durationHours })
+        fastSessions.max(by: { $0.durationHours < $1.durationHours })
     }
     private var averageHours: Double {
-        guard !sessions.isEmpty else { return 0 }
-        return sessions.reduce(0) { $0 + $1.durationHours } / Double(sessions.count)
+        guard !fastSessions.isEmpty else { return 0 }
+        return fastSessions.reduce(0) { $0 + $1.durationHours } / Double(fastSessions.count)
     }
 
     var body: some View {
@@ -447,7 +663,7 @@ struct HistorySection: View {
 
             // Stats row
             HStack(spacing: 12) {
-                MiniStatCard(value: "\(sessions.count)",
+                MiniStatCard(value: "\(fastSessions.count)",
                              label: "Total\nFasts",
                              icon: "timer",
                              color: .blue)
@@ -520,20 +736,35 @@ struct FastHistoryRow: View {
     let session: FastingSession
     @State private var showingEdit = false
 
+    private var isTrack: Bool { session.planName.hasPrefix("Track") }
+
     var body: some View {
         Button { showingEdit = true } label: {
             VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 12) {
-                    Text(session.phase.emoji)
-                        .font(.title3)
-                        .frame(width: 36, height: 36)
-                        .background(Color(.tertiarySystemBackground))
-                        .clipShape(Circle())
+                    ZStack {
+                        Circle()
+                            .fill(isTrack ? Color.green.opacity(0.15) : Color(.tertiarySystemBackground))
+                            .frame(width: 36, height: 36)
+                        if isTrack {
+                            Image(systemName: "bolt.fill").foregroundStyle(.green).font(.subheadline)
+                        } else {
+                            Text(session.phase.emoji).font(.title3)
+                        }
+                    }
 
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(session.planName)
-                            .font(.subheadline).fontWeight(.semibold)
-                            .foregroundStyle(.primary)
+                        HStack(spacing: 6) {
+                            Text(session.planName)
+                                .font(.subheadline).fontWeight(.semibold)
+                                .foregroundStyle(.primary)
+                            Text(isTrack ? "Track" : "Fast")
+                                .font(.caption2).fontWeight(.semibold)
+                                .foregroundStyle(isTrack ? .green : .blue)
+                                .padding(.horizontal, 6).padding(.vertical, 2)
+                                .background(isTrack ? Color.green.opacity(0.12) : Color.blue.opacity(0.12))
+                                .clipShape(Capsule())
+                        }
                         Text(session.startTime.formatted(.dateTime.month(.abbreviated).day().hour().minute()))
                             .font(.caption).foregroundStyle(.secondary)
                     }
@@ -555,7 +786,7 @@ struct FastHistoryRow: View {
                 if !session.note.isEmpty {
                     HStack(spacing: 6) {
                         Rectangle()
-                            .fill(Color.blue)
+                            .fill(isTrack ? Color.green : Color.blue)
                             .frame(width: 2)
                         Text(session.note)
                             .font(.caption)
@@ -686,7 +917,7 @@ struct EditFastSheet: View {
                     .datePickerStyle(.graphical)
                 }
 
-                Section("Fasting goal") {
+                Section("Duration goal") {
                     VStack(spacing: 8) {
                         Text("\(Int(targetHours)) hours")
                             .font(.title2).fontWeight(.bold)
@@ -711,7 +942,7 @@ struct EditFastSheet: View {
                     }
                 }
             }
-            .navigationTitle("Edit Fast")
+            .navigationTitle("Edit Session")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {

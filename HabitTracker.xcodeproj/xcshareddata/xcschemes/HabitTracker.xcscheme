@@ -21,6 +21,20 @@
                ReferencedContainer = "container:HabitTracker.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
+         <BuildActionEntry
+            buildForTesting = "YES"
+            buildForRunning = "YES"
+            buildForProfiling = "YES"
+            buildForArchiving = "YES"
+            buildForAnalyzing = "YES">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "2177DAE02FAA7C4400E6D814"
+               BuildableName = "FastingWidgetExtension.appex"
+               BlueprintName = "FastingWidgetExtension"
+               ReferencedContainer = "container:HabitTracker.xcodeproj">
+            </BuildableReference>
+         </BuildActionEntry>
       </BuildActionEntries>
    </BuildAction>
    <TestAction

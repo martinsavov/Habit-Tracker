@@ -15,7 +15,7 @@ struct ContentView: View {
                 .tag(1)
 
             FastingView()
-                .tabItem { Label("Fasting", systemImage: "timer") }
+                .tabItem { Label("Tracker", systemImage: "timer") }
                 .tag(2)
 
             WeightView()
@@ -34,7 +34,7 @@ struct ContentView: View {
         switch colorSchemePref {
         case "light": return .light
         case "dark":  return .dark
-        default:      return nil  // follows system
+        default:      return nil
         }
     }
 }
