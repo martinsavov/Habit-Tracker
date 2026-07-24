@@ -48,13 +48,13 @@ struct WeightView: View {
                     )
                     .padding(.horizontal)
 
-                    // Chart
+                    // Chart with its own range selector
                     if sortedEntries.count >= 2 {
-                        WeightChartView(entries: sortedEntries, goal: goalWeight > 0 ? goalWeight : nil)
+                        WeightChartView(allEntries: sortedEntries, goal: goalWeight > 0 ? goalWeight : nil)
                             .padding(.horizontal)
                     }
 
-                    // History list
+                    // History list — always all-time stats
                     if !entries.isEmpty {
                         WeightHistoryList(entries: entries)
                             .padding(.horizontal)
@@ -176,27 +176,145 @@ struct CurrentWeightCard: View {
     }
 }
 
+// MARK: - Chart Range
+
+enum ChartRange: String, CaseIterable, Identifiable {
+    case week = "Week"
+    case month = "Month"
+    case threeMonths = "3M"
+    case sixMonths = "6M"
+    case all = "All"
+
+    var id: String { rawValue }
+
+    var days: Int? {
+        switch self {
+        case .week:        return 7
+        case .month:        return 30
+        case .threeMonths:  return 90
+        case .sixMonths:    return 180
+        case .all:          return nil
+        }
+    }
+
+    // How the x-axis should be stepped for this range, to avoid label overlap
+    var axisStrideDays: Int {
+        switch self {
+        case .week:        return 1     // show every day
+        case .month:        return 7     // show one label per week
+        case .threeMonths:  return 30    // show one label per month
+        case .sixMonths:    return 30    // show ~6 labels
+        case .all:          return 30    // fallback, refined dynamically below
+        }
+    }
+}
+
 // MARK: - Weight Chart
 
 struct WeightChartView: View {
-    let entries: [WeightEntry]
+    let allEntries: [WeightEntry]
     let goal: Double?
 
+    @State private var range: ChartRange = .week
+
+    // Explicit domain for the x-axis, independent of where the actual data points sit.
+    // This ensures Week always shows Mon–Sun, Month always shows ~4 weeks, etc.
+    private var xDomain: ClosedRange<Date> {
+        let cal = Calendar.current
+        let today = cal.startOfDay(for: Date())
+
+        switch range {
+        case .week:
+            var weekCal = cal
+            weekCal.firstWeekday = 2 // Monday
+            let interval = weekCal.dateInterval(of: .weekOfYear, for: today) ?? DateInterval(start: today, end: today)
+            let end = cal.date(byAdding: .day, value: -1, to: interval.end) ?? interval.end
+            return interval.start...end
+
+        case .month:
+            let start = cal.date(byAdding: .day, value: -29, to: today) ?? today
+            return start...today
+
+        case .threeMonths:
+            let start = cal.date(byAdding: .day, value: -89, to: today) ?? today
+            return start...today
+
+        case .sixMonths:
+            let start = cal.date(byAdding: .day, value: -179, to: today) ?? today
+            return start...today
+
+        case .all:
+            let first = allEntries.first?.date ?? today
+            return cal.startOfDay(for: first)...today
+        }
+    }
+
+    private var filteredEntries: [WeightEntry] {
+        if range == .week {
+            // Always Monday–Sunday of the current week, regardless of today's weekday
+            var cal = Calendar.current
+            cal.firstWeekday = 2 // Monday
+            let today = Date()
+            guard let weekInterval = cal.dateInterval(of: .weekOfYear, for: today) else {
+                return allEntries
+            }
+            let filtered = allEntries.filter {
+                $0.date >= weekInterval.start && $0.date < weekInterval.end
+            }
+            return filtered.count >= 2 ? filtered : Array(allEntries.suffix(2))
+        }
+
+        guard let days = range.days else { return allEntries }
+        let cutoff = Calendar.current.date(byAdding: .day, value: -days, to: Date()) ?? Date.distantPast
+        let filtered = allEntries.filter { $0.date >= cutoff }
+        // Always show at least the 2 most recent points so the chart isn't empty
+        // if entries are sparse within the selected range.
+        return filtered.count >= 2 ? filtered : Array(allEntries.suffix(2))
+    }
+
     private var minY: Double {
-        let min = entries.map { $0.kg }.min() ?? 0
+        let min = filteredEntries.map { $0.kg }.min() ?? 0
         return (goal.map { Swift.min($0, min) } ?? min) - 2
     }
     private var maxY: Double {
-        let max = entries.map { $0.kg }.max() ?? 0
+        let max = filteredEntries.map { $0.kg }.max() ?? 0
         return (goal.map { Swift.max($0, max) } ?? max) + 2
+    }
+
+    private func axisLabel(for date: Date) -> String {
+        let cal = Calendar.current
+        switch range {
+        case .week:
+            // e.g. "Mon 14"
+            let weekday = date.formatted(.dateTime.weekday(.abbreviated))
+            let day = cal.component(.day, from: date)
+            return "\(weekday) \(day)"
+        case .month:
+            // ISO week number, e.g. "W29"
+            let week = cal.component(.weekOfYear, from: date)
+            return "W\(week)"
+        case .threeMonths, .sixMonths, .all:
+            return date.formatted(.dateTime.month(.abbreviated))
+        }
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Progress").font(.headline)
+            HStack {
+                Text("Progress").font(.headline)
+                Spacer()
+            }
+
+            // Range picker
+            Picker("Range", selection: $range) {
+                ForEach(ChartRange.allCases) { r in
+                    Text(r.rawValue).tag(r)
+                }
+            }
+            .pickerStyle(.segmented)
 
             Chart {
-                ForEach(entries) { entry in
+                ForEach(filteredEntries) { entry in
                     LineMark(
                         x: .value("Date", entry.date),
                         y: .value("Weight", entry.kg)
@@ -232,10 +350,39 @@ struct WeightChartView: View {
                 }
             }
             .chartYScale(domain: minY...maxY)
+            .chartXScale(domain: xDomain)
             .chartXAxis {
-                AxisMarks(values: .stride(by: .day, count: max(1, entries.count / 4))) { value in
-                    AxisValueLabel(format: .dateTime.day().month(.abbreviated))
+                switch range {
+                case .week:
+                    AxisMarks(values: .stride(by: .day)) { value in
+                        AxisValueLabel {
+                            if let date = value.as(Date.self) {
+                                Text(axisLabel(for: date))
+                            }
+                        }
                         .font(.caption2)
+                        AxisGridLine()
+                    }
+                case .month:
+                    AxisMarks(values: .stride(by: .weekOfYear)) { value in
+                        AxisValueLabel {
+                            if let date = value.as(Date.self) {
+                                Text(axisLabel(for: date))
+                            }
+                        }
+                        .font(.caption2)
+                        AxisGridLine()
+                    }
+                case .threeMonths, .sixMonths, .all:
+                    AxisMarks(values: .stride(by: .month)) { value in
+                        AxisValueLabel {
+                            if let date = value.as(Date.self) {
+                                Text(axisLabel(for: date))
+                            }
+                        }
+                        .font(.caption2)
+                        AxisGridLine()
+                    }
                 }
             }
             .chartYAxis {
@@ -250,6 +397,7 @@ struct WeightChartView: View {
                 }
             }
             .frame(height: 200)
+            .animation(.easeInOut(duration: 0.25), value: range)
         }
         .padding()
         .background(Color(.secondarySystemBackground))
@@ -257,7 +405,7 @@ struct WeightChartView: View {
     }
 }
 
-// MARK: - Weight History List
+// MARK: - Weight History List (always all-time)
 
 struct WeightHistoryList: View {
     @Environment(\.modelContext) private var context
@@ -267,7 +415,7 @@ struct WeightHistoryList: View {
         VStack(alignment: .leading, spacing: 12) {
             Text("History").font(.headline)
 
-            // Stats
+            // Stats — all-time, unaffected by chart range
             if entries.count >= 2 {
                 let weights = entries.map { $0.kg }
                 HStack(spacing: 12) {
