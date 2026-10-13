@@ -1,6 +1,7 @@
 import SwiftUI
 import SwiftData
 import SQLite3
+import UserNotifications
 
 let appGroupID = "group.com.martinsavov.habittracker"
 
@@ -9,6 +10,9 @@ struct HabitTrackerApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView()
+                .onAppear {
+                    resyncHabitNotificationsOnce(context: sharedModelContainer.mainContext)
+                }
         }
         .modelContainer(sharedModelContainer)
     }
@@ -35,6 +39,49 @@ private func deleteStore(at url: URL) {
     try? FileManager.default.removeItem(at: url)
     try? FileManager.default.removeItem(at: url.appendingPathExtension("shm"))
     try? FileManager.default.removeItem(at: url.appendingPathExtension("wal"))
+}
+
+// MARK: - One-time notification cleanup
+// Removes orphaned habit notifications left by past store wipes, then
+// refreshes valid ones (same identifier = overwrite). Only touches UUID
+// identifiers, so "fasting-goal" is never affected. Runs once; bump the
+// key (V2, ...) to force another run after a future bulk-orphaning event.
+private let resyncFlagKey = "didResyncHabitNotificationsV1"
+
+private func resyncHabitNotificationsOnce(context: ModelContext) {
+    guard !UserDefaults.standard.bool(forKey: resyncFlagKey) else { return }
+
+    let center = UNUserNotificationCenter.current()
+    guard let habits = try? context.fetch(FetchDescriptor<Habit>()) else { return }
+    let habitsByID = Dictionary(habits.map { ($0.id.uuidString, $0) }, uniquingKeysWith: { a, _ in a })
+
+    center.getPendingNotificationRequests { requests in
+        var idsToRemove: [String] = []
+        for request in requests {
+            let id = request.identifier
+            guard UUID(uuidString: id) != nil else { continue }
+            if let habit = habitsByID[id] {
+                if !habit.reminderEnabled { idsToRemove.append(id) }
+            } else {
+                idsToRemove.append(id)
+            }
+        }
+        if !idsToRemove.isEmpty {
+            center.removePendingNotificationRequests(withIdentifiers: idsToRemove)
+        }
+
+        for habit in habits where habit.reminderEnabled {
+            guard let time = habit.reminderTime else { continue }
+            let content = UNMutableNotificationContent()
+            content.title = habit.name
+            content.body  = "Time to build your streak 🔥"
+            content.sound = .default
+            let comps = Calendar.current.dateComponents([.hour, .minute], from: time)
+            let trigger = UNCalendarNotificationTrigger(dateMatching: comps, repeats: true)
+            center.add(UNNotificationRequest(identifier: habit.id.uuidString, content: content, trigger: trigger))
+        }
+        UserDefaults.standard.set(true, forKey: resyncFlagKey)
+    }
 }
 
 let sharedModelContainer: ModelContainer = {
