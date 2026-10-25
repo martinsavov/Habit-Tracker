@@ -265,7 +265,7 @@ struct TrackCard: View {
     let onCustom: () -> Void
 
     private let presets: [(label: String, minutes: Double)] = [
-        ("15m", 15), ("30m", 30), ("1h", 60), ("2h", 120)
+        ("5m", 5), ("15m", 15), ("30m", 30), ("1h", 60)
     ]
 
     var body: some View {
