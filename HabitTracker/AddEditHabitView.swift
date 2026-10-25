@@ -26,14 +26,14 @@ struct AddEditHabitView: View {
     var habit: Habit? = nil
 
     @State private var name            = ""
-    @State private var emoji           = "⭐"
+    @State private var icon            = HabitIcon.defaultValue
     @State private var selectedColor   = "#0A84FF"
     @State private var frequency: Set<Int> = [0,1,2,3,4,5,6]
     @State private var reminderEnabled = false
     @State private var reminderTime    = Calendar.current.date(
         bySettingHour: 9, minute: 0, second: 0, of: Date()
     ) ?? Date()
-    @State private var showingEmojiPicker = false
+    @State private var showingIconPicker = false
 
     private let palette: [String] = [
         "#0A84FF", "#30D158", "#FF9F0A", "#FF453A",
@@ -45,16 +45,13 @@ struct AddEditHabitView: View {
         NavigationStack {
             Form {
 
-                // ── Name & Emoji ──────────────────────────────────────────
+                // ── Name & Icon ───────────────────────────────────────────
                 Section {
                     HStack(spacing: 16) {
-                        Button { showingEmojiPicker = true } label: {
-                            ZStack {
-                                RoundedRectangle(cornerRadius: 12)
-                                    .fill((Color(hex: selectedColor) ?? .blue).opacity(0.2))
-                                    .frame(width: 56, height: 56)
-                                Text(emoji).font(.largeTitle)
-                            }
+                        Button { showingIconPicker = true } label: {
+                            HabitIconTile(icon: icon,
+                                          color: Color(hex: selectedColor) ?? .blue,
+                                          side: 56)
                         }
                         .buttonStyle(.plain)
 
@@ -158,8 +155,8 @@ struct AddEditHabitView: View {
                         .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
                 }
             }
-            .sheet(isPresented: $showingEmojiPicker) {
-                EmojiPickerView(selectedEmoji: $emoji)
+            .sheet(isPresented: $showingIconPicker) {
+                IconPickerView(selection: $icon, color: Color(hex: selectedColor) ?? .blue)
             }
         }
         .onAppear { populateFields() }
@@ -179,7 +176,7 @@ struct AddEditHabitView: View {
     private func populateFields() {
         guard let h = habit else { return }
         name            = h.name
-        emoji           = h.emoji
+        icon            = h.emoji
         selectedColor   = h.colorHex
         frequency       = Set(h.frequency)
         reminderEnabled = h.reminderEnabled
@@ -193,7 +190,7 @@ struct AddEditHabitView: View {
         if let h = habit {
             cancelNotification(id: h.id.uuidString)
             h.name            = trimmed
-            h.emoji           = emoji
+            h.emoji           = icon
             h.colorHex        = selectedColor
             h.frequency       = Array(frequency).sorted()
             h.reminderEnabled = reminderEnabled
@@ -202,7 +199,7 @@ struct AddEditHabitView: View {
         } else {
             let h = Habit(
                 name:            trimmed,
-                emoji:           emoji,
+                emoji:           icon,
                 colorHex:        selectedColor,
                 frequency:       Array(frequency).sorted(),
                 reminderTime:    reminderEnabled ? reminderTime : nil,
@@ -287,47 +284,5 @@ struct QuickSelectButton: View {
                 .clipShape(Capsule())
         }
         .buttonStyle(.plain)
-    }
-}
-
-// MARK: - Emoji Picker
-
-struct EmojiPickerView: View {
-    @Binding var selectedEmoji: String
-    @Environment(\.dismiss) private var dismiss
-
-    private let emojis: [String] = [
-        "⭐","🔥","💪","🏃","📚","🎯","💧","🥗","😴","🧘",
-        "✍️","🎨","🎵","🚴","🏊","🧗","🌿","🍎","☀️","🌙",
-        "💊","🧠","❤️","🤸","🍵","📝","🗣️","🚶","🏋️","🎉",
-        "💰","🌍","🦷","🛁","🧹","📱","💻","✉️","🎮","🧩",
-        "🏆","⚡","🌊","🎭","🦋","🌸","🍕","☕","🎸","🏅"
-    ]
-    private let columns = Array(repeating: GridItem(.flexible()), count: 8)
-
-    var body: some View {
-        NavigationStack {
-            ScrollView {
-                LazyVGrid(columns: columns, spacing: 16) {
-                    ForEach(emojis, id: \.self) { e in
-                        Button {
-                            selectedEmoji = e
-                            UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                            dismiss()
-                        } label: {
-                            Text(e).font(.largeTitle)
-                        }
-                    }
-                }
-                .padding()
-            }
-            .navigationTitle("Choose Emoji")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
-                }
-            }
-        }
     }
 }

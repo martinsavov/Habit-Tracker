@@ -241,7 +241,8 @@ struct HabitRowView: View {
                     Circle()
                         .fill(habit.color.opacity(0.15))
                         .frame(width: 50, height: 50)
-                    Text(habit.emoji).font(.title2)
+                    HabitIconView(value: habit.emoji, size: 22)
+                        .foregroundStyle(habit.color)
                 }
 
                 VStack(alignment: .leading, spacing: 3) {
