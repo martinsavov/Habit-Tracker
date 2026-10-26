@@ -1,5 +1,6 @@
 import SwiftUI
 import SwiftData
+import UserNotifications
 
 struct AllHabitsView: View {
     @Environment(\.modelContext) private var context
@@ -72,6 +73,8 @@ struct AllHabitsView: View {
     }
 
     private func deleteHabits(at offsets: IndexSet) {
+        let ids = offsets.map { habits[$0].id.uuidString }
+        cancelHabitNotifications(ids: ids)
         for index in offsets { context.delete(habits[index]) }
         do { try context.save() } catch { print("Delete error: \(error)") }
     }

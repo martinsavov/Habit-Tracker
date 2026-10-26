@@ -7,14 +7,21 @@ let appGroupID = "group.com.martinsavov.habittracker"
 
 @main
 struct HabitTrackerApp: App {
+    @Environment(\.scenePhase) private var scenePhase
+
     var body: some Scene {
         WindowGroup {
             ContentView()
                 .onAppear {
-                    resyncHabitNotificationsOnce(context: sharedModelContainer.mainContext)
+                    reconcileHabitNotifications(context: sharedModelContainer.mainContext)
                 }
         }
         .modelContainer(sharedModelContainer)
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active {
+                reconcileHabitNotifications(context: sharedModelContainer.mainContext)
+            }
+        }
     }
 }
 
@@ -41,47 +48,38 @@ private func deleteStore(at url: URL) {
     try? FileManager.default.removeItem(at: url.appendingPathExtension("wal"))
 }
 
-// MARK: - One-time notification cleanup
-// Removes orphaned habit notifications left by past store wipes, then
-// refreshes valid ones (same identifier = overwrite). Only touches UUID
-// identifiers, so "fasting-goal" is never affected. Runs once; bump the
-// key (V2, ...) to force another run after a future bulk-orphaning event.
-private let resyncFlagKey = "didResyncHabitNotificationsV1"
+// MARK: - Habit notification housekeeping
+// Single source of truth: a habit notification is valid only if its
+// identifier is the UUID of an existing habit with reminders switched on.
+// The only other notification the app owns is "fasting-goal".
 
-private func resyncHabitNotificationsOnce(context: ModelContext) {
-    guard !UserDefaults.standard.bool(forKey: resyncFlagKey) else { return }
-
+/// Cancels a habit's scheduled reminder and clears any already-delivered copy.
+func cancelHabitNotifications(ids: [String]) {
+    guard !ids.isEmpty else { return }
     let center = UNUserNotificationCenter.current()
+    center.removePendingNotificationRequests(withIdentifiers: ids)
+    center.removeDeliveredNotifications(withIdentifiers: ids)
+}
+
+/// Idempotent and removal-only: drops every pending or delivered notification
+/// that does not belong to an active habit (deleted habits, reminders turned
+/// off, legacy identifiers). Safe to run on every launch / foreground.
+func reconcileHabitNotifications(context: ModelContext) {
     guard let habits = try? context.fetch(FetchDescriptor<Habit>()) else { return }
-    let habitsByID = Dictionary(habits.map { ($0.id.uuidString, $0) }, uniquingKeysWith: { a, _ in a })
+    let active = Set(habits.filter { $0.reminderEnabled }.map { $0.id.uuidString })
+    let keep = active.union(["fasting-goal"])
+    let center = UNUserNotificationCenter.current()
 
     center.getPendingNotificationRequests { requests in
-        var idsToRemove: [String] = []
-        for request in requests {
-            let id = request.identifier
-            guard UUID(uuidString: id) != nil else { continue }
-            if let habit = habitsByID[id] {
-                if !habit.reminderEnabled { idsToRemove.append(id) }
-            } else {
-                idsToRemove.append(id)
-            }
-        }
-        if !idsToRemove.isEmpty {
-            center.removePendingNotificationRequests(withIdentifiers: idsToRemove)
-        }
-
-        for habit in habits where habit.reminderEnabled {
-            guard let time = habit.reminderTime else { continue }
-            let content = UNMutableNotificationContent()
-            content.title = habit.name
-            content.body  = "Time to build your streak 🔥"
-            content.sound = .default
-            let comps = Calendar.current.dateComponents([.hour, .minute], from: time)
-            let trigger = UNCalendarNotificationTrigger(dateMatching: comps, repeats: true)
-            center.add(UNNotificationRequest(identifier: habit.id.uuidString, content: content, trigger: trigger))
-        }
-        UserDefaults.standard.set(true, forKey: resyncFlagKey)
+        let stale = requests.map(\.identifier).filter { !keep.contains($0) }
+        if !stale.isEmpty { center.removePendingNotificationRequests(withIdentifiers: stale) }
     }
+    center.getDeliveredNotifications { delivered in
+        let stale = delivered.map(\.request.identifier).filter { !keep.contains($0) }
+        if !stale.isEmpty { center.removeDeliveredNotifications(withIdentifiers: stale) }
+    }
+    // The app never sets a badge number, so clear any leftover one.
+    center.setBadgeCount(0) { _ in }
 }
 
 let sharedModelContainer: ModelContainer = {

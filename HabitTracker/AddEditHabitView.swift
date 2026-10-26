@@ -218,7 +218,7 @@ struct AddEditHabitView: View {
 
     private func deleteHabit() {
         guard let h = habit else { return }
-        cancelNotification(id: h.id.uuidString)
+        cancelHabitNotifications(ids: [h.id.uuidString])
         context.delete(h)
         do { try context.save() } catch { print("Delete error: \(error)") }
         dismiss()
